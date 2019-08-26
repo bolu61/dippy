@@ -15,6 +15,9 @@ keywords = ["discord","trio","bot","framework"]
 
 [tool.poetry.dependencies]
 python = "^3.7"
+asks = "^2.3"
+trio = "^0.12.1"
+trio-websocket = "^0.8.0"
 
 [tool.poetry.dev-dependencies]
 pylint = "^2.3"
