@@ -59,17 +59,21 @@ class Gate(trio.abc.Channel):
 
         @hook("hello")
         async def heartbeat(hb):
-            hb_s = hb / 1000
+            hb_s = hb / 1000 + 0.5
+
             while True:
                 await self.send(1, self._ls)
+                deadline = trio.current_time() + hb_s
+
                 try:
-                    with trio.fail_after(hb_s) as cs:
+                    with trio.fail_at(deadline):
                         await self._ack.park()
-                        await trio.sleep_until(cs.deadline)
                 except trio.TooSlowError:
                     #TODO disconnect and resume
                     raise Exception("too slow lol")
                     return
+
+                await trio.sleep_until(deadline)
 
         #@hook("hello")
         async def identify(_):
