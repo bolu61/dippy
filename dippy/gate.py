@@ -1,40 +1,120 @@
+from .utils.hooks import hook, hookable
 import trio
-from trio_websocket import open_websocket_url, connect_websocket_url
+from trio_websocket import connect_websocket_url
+import asks
 from contextlib import asynccontextmanager
 from json import dumps, loads
 from collections import namedtuple
+from functools import wraps
 
-class Payload(namedtuple("_Payload", "op d s t")):
+import logging
+log = logging.getLogger(__name__)
+
+class Payload(namedtuple("_Payload", ("op", "d", "s", "t"), defaults = (None, None, None, None))):
     @classmethod
-    def from_str(data):
-        d = json.loads(data)
-        Payload(**d)
+    def from_str(cls, data):
+        d = loads(data)
+        return Payload(**d)
     def __str__(self):
-        return json.dumps(self._asdict())
+        return dumps(self._asdict())
     def __getitem__(self, key):
         if isinstance(key, str):
             return getattr(self, key)
         else:
             return super().__getitem__(key)
 
+
 @asynccontextmanager
-async def open_gate(*args, nursery = None, **kwargs):
-    if isinstance(nursery, trio.Nursery):
-        yield Gate(await connect_websocket_url(nursery, *args, **kwargs))
-    else:
-        async with open_websocket_url(*args, **kwargs) as ws:
-            yield Gate(ws)
+async def open_gate(*args, config = None, **kwargs):
+    gateway_url = await get_gateway_url()
+    async with trio.open_nursery() as ns:
+        yield Gate(ns, await connect_websocket_url(ns, f"{gateway_url}?/v=6&encoding=json", *args, **kwargs)) #TODO parametrizwe the url
+
+
+async def connect_gate(nursery, *args, config = None, **kwargs):
+    gateway_url = get_gateway_url()
+    yield Gate(nursery, await connect_websocket_url(nursery, f"{gateway_url}?/v=6&encoding=json", *args, **kwargs))
+
+async def get_gateway_url(config = None):
+    r = await asks.get('https://discordapp.com/api/gateway')
+    return loads(r.content)['url']
 
 
 class Gate(trio.abc.Channel):
-    def __init__(self, ws):
-        self._ws = ws
+    def __init__(self, nursery, websocket):
+        self._ns = nursery
+        self._ws = websocket
+        self._hb = None
+        self._ls = None
+        self._ack = trio.hazmat.ParkingLot()
+        self.handlers = {}
+
+        @nursery.start_soon
+        async def listener():
+            while True:
+                r = await self.receive()
+                if r.op not in self.handlers:
+                    raise #TODO
+                self._ns.start_soon(self.handlers[r.op], r.d)
+
+        @hook("hello")
+        async def heartbeat(hb):
+            hb_s = hb / 1000
+            while True:
+                await self.send(1, self._ls)
+                try:
+                    with trio.fail_after(hb_s) as cs:
+                        await self._ack.park()
+                        await trio.sleep_until(cs.deadline)
+                except trio.TooSlowError:
+                    #TODO disconnect and resume
+                    raise Exception("too slow lol")
+                    return
+
+        #@hook("hello")
+        async def identify(_):
+            await self.send(2, {
+                'token': '',
+                'properties': {
+                    '$os': "win10",
+                    '$browser': "dippy",
+                    '$device': "dippy"
+                }
+            })
+
+        @self.handler(10)
+        @hookable("hello")
+        async def on_hello(data):
+            log.debug("opcode 10 hello received")
+            self._hb = data['heartbeat_interval']
+            return self._hb
+
+        @self.handler(11)
+        async def on_ack(data):
+            self._ack.unpark_all()
+
+        @self.handler(0)
+        async def on_dispatch(data):
+            print(data)
+
+    def handler(self, opcode):
+        def decorate(f):
+            self.handlers[opcode] = f
+            return f
+        return decorate
 
     async def aclose(self):
-        self._ws.aclose()
+        return await self._ws.aclose()
 
-    async def send(self, op, d, s, t):
-        self._ws.send_message(str(Payload(op, d, s, t)))
+    async def send(self, *args):
+        @hookable("send")
+        async def _send():
+            r = Payload(*args)
+            await self._ws.send_message(str(r))
+            return r
+        await _send()
 
+    @hookable("receive")
     async def receive(self):
-        Payload.from_str(self._ws.get_message())
+        return Payload.from_str(await self._ws.get_message())
+
