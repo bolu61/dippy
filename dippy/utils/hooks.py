@@ -25,7 +25,7 @@ def hookable(name):
                 for g in _hookables[name]:
                     ns.start_soon(maybe_async, g, r)
             return r
-        if not _hookables[name]:
+        if name not in _hookables:
             _hookables[name] = []
         return wrap(f)
     return decorator
