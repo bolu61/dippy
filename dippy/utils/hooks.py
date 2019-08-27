@@ -24,7 +24,7 @@ def hookable(name):
             for g in _hookables[name]:
                 await maybe_async(g, r)
             return r
-        if not _hookable[name]:
+        if not _hookables[name]:
             _hookables[name] = []
         return wrap(f)
     return decorator
