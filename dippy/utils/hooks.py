@@ -21,8 +21,9 @@ def hookable(name):
         @wrapt.decorator
         async def wrap(f, self, args, kwargs):
             r = await maybe_async(f, *args, **kwargs)
-            for g in _hookables[name]:
-                await maybe_async(g, r)
+            async with trio.open_nursery() as ns:
+                for g in _hookables[name]:
+                    ns.start_soon(maybe_async, g, r)
             return r
         if not _hookables[name]:
             _hookables[name] = []
