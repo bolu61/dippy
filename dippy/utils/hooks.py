@@ -20,8 +20,6 @@ def hookable(name):
             raise TypeError("hookable() takes one function as its positional parameter")
         @wrapt.decorator
         async def wrap(f, self, args, kwargs):
-            print(name)
-            print(_hookables)
             r = await maybe_async(f, *args, **kwargs)
             for g in _hookables[name]:
                 await maybe_async(g, r)
