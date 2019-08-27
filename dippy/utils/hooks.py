@@ -19,7 +19,7 @@ def hookable(name):
         if not callable(f):
             raise TypeError("hookable() takes one function as its positional parameter")
         @wrapt.decorator
-        async def wrap(f, self, args, kwargs):
+        async def wrap(f, _, args, kwargs):
             r = await maybe_async(f, *args, **kwargs)
             async with trio.open_nursery() as ns:
                 for g in _hookables[name]:
@@ -30,7 +30,7 @@ def hookable(name):
         return wrap(f)
     return decorator
 
-def hook(name, count = 0):
+def hook(name):
     def decorator(f):
         if not callable(f):
             raise TypeError("expected a callable")
@@ -41,4 +41,3 @@ def hook(name, count = 0):
         _hookables[name].append(f)
         return f
     return decorator
-
