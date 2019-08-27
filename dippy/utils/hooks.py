@@ -35,7 +35,7 @@ def hook(name, count = 0):
         if len(inspect.signature(f).parameters) != 1:
             raise TypeError(f"{f.__name__} needs 1 parameter for the return value")
         if name not in _hookables:
-            raise FunctionUnhookable(f"{name} is not hookable")
+            _hookables[name] = []
         _hookables[name].append(f)
         return f
     return decorator
