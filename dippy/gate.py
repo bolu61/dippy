@@ -1,4 +1,4 @@
-from .utils.hooks import hook, hookable
+from .utils.hooks import hook, on
 import trio
 from trio_websocket import connect_websocket_url
 import asks
@@ -57,7 +57,7 @@ class Gate(trio.abc.Channel):
                     raise #TODO
                 self._ns.start_soon(self.handlers[r.op], r.d)
 
-        @hook("hello")
+        @on("hello")
         async def heartbeat(hb):
             hb_s = hb / 1000 + 0.5
 
@@ -87,7 +87,7 @@ class Gate(trio.abc.Channel):
             })
 
         @self.handler(10)
-        @hookable("hello")
+        @hook("hello")
         async def on_hello(data):
             log.debug("opcode 10 hello received")
             self._hb = data['heartbeat_interval']
@@ -111,14 +111,14 @@ class Gate(trio.abc.Channel):
         return await self._ws.aclose()
 
     async def send(self, *args):
-        @hookable("send")
+        @hook("send")
         async def _send():
             r = Payload(*args)
             await self._ws.send_message(str(r))
             return r
         await _send()
 
-    @hookable("receive")
+    @hook("receive")
     async def receive(self):
         return Payload.from_str(await self._ws.get_message())
 
