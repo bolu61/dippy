@@ -1,100 +1,165 @@
 from wrapt import ObjectProxy
 import trio
-import inspect
-from operator import or_
 from functools import partial, reduce
+from abc import ABCMeta, abstractmethod
 
 _hashed_hooks = {}
 
 
-class _Hook(object):
 
-    def __init__(self, listeners = None):
-        self._self_listeners = set(listeners) if listeners else set()
+class DummyTrigger(object):
 
+    def __init__(self, listeners = None, instance_listeners = None):
+        self._listeners = listeners or set()
+        self._instance_listeners = instance_listeners or {}
 
     @property
-    def _listeners(self):
-        return self._self_listeners
+    def target(self):
+        raise TypeError("Target of trigger has not been defined yet")
 
-
-    def _hook(self, f):
-        self._self_listeners.add(f)
-
-
-
-class Hook(_Hook, ObjectProxy):
-
-    def __init__(self, target, name = None):
-        _Hook.__init__(self)
-        ObjectProxy.__init__(self, target)
-        self._self_name = name
-        self._self_instance_listeners = {}
-        if name:
-            if name in _hashed_hooks:
-                self._listeners.update(_hashed_hooks[name]._listeners)
-            _hashed_hooks[name] = self
-
-
-    async def __call__(self, *args, **kwargs):
-        r = await self.__wrapped__(*args, **kwargs)
-        s = r if type(r) is tuple else r,
-        async with trio.open_nursery() as ns:
-            for f in self._listeners:
-                ns.start_soon(f, *s)
-        return r
+    @property
+    def listeners(self):
+        return self._listeners
 
 
     def __get__(self, instance, owner):
-        if instance not in self._self_instance_listeners:
-            self._self_instance_listeners[instance] = set()
-        return BoundHook(
-            self.__wrapped__.__get__(instance, owner),
-            self._self_name,
-            self._self_instance_listeners[instance],
-            self._self_listeners
-        )
+        if instance not in self._instance_listeners:
+            self._instance_listeners[instance] = set()
+        return BoundDummyTrigger(self._instance_listeners, self._listeners)
+
+
+    def register(self, f):
+        self.listeners.add(f)
 
 
 
-class BoundHook(Hook, ObjectProxy):
+class BoundDummyTrigger(object):
 
-    def __init__(self, target, name, listeners, class_listeners):
-        _Hook.__init__(self, listeners = listeners)
-        ObjectProxy.__init__(self, target)
-        self._self_name = name
-        self._self_class_listeners = class_listeners
-
+    def __init__(self, listeners = None, class_listeners = None):
+        self._listeners = listeners
+        self._class_listeners = class_listeners or set()
 
     @property
-    def _listeners(self):
-        return super()._listeners | self._self_class_listeners
+    def target(self):
+        raise TypeError("Target of trigger has not been defined yet")
+
+    @property
+    def listeners(self):
+        return self._listeners | self._class_listeners
 
 
     def __get__(self, instance, owner):
         return self
 
 
+    def register(self, f):
+        self._listeners.add(f)
 
-def hook(f, name = None):
+
+
+class Trigger(ObjectProxy):
+
+    def __init__(self, target, listeners = None , instance_listeners = None):
+        super().__init__(target)
+        self._self_listeners = listeners or set()
+        self._self_instance_listeners = instance_listeners or {}
+
+    @property
+    def listeners(self):
+        return self._self_listeners
+
+    @property
+    def target(self):
+        return self.__wrapped__
+
+
+    def __get__(self, instance, owner):
+        if instance not in self._self_instance_listeners:
+            self._self_instance_listeners[instance] = set()
+        return BoundTrigger(
+            target = self.__wrapped__.__get__(instance, owner),
+            listeners = self._self_instance_listeners[instance],
+            class_listeners = self._self_listeners
+        )
+
+
+    async def __call__(self, *args, **kwargs):
+        r = await self.target(*args, **kwargs)
+        s = r if type(r) is tuple else r,
+        async with trio.open_nursery() as ns:
+            for f in self.listeners:
+                ns.start_soon(f, *s)
+        return r
+
+
+    def register(self, f):
+        self._self_listeners.add(f)
+
+
+
+class BoundTrigger(ObjectProxy):
+
+    def __init__(self, target, listeners, class_listeners):
+        super().__init__(target)
+        self._self_listeners = listeners
+        self._self_class_listeners = class_listeners
+
+    @property
+    def listeners(self):
+        return self._self_listeners | self._self_class_listeners
+
+    @property
+    def target(self):
+        return self.__wrapped__
+
+
+    def __get__(self, instance, owner):
+        return self
+
+
+    async def __call__(self, *args, **kwargs):
+        r = await self.target(*args, **kwargs)
+        s = r if type(r) is tuple else r,
+        async with trio.open_nursery() as ns:
+            for f in self.listeners:
+                ns.start_soon(f, *s)
+        return r
+
+
+    def register(self, f):
+        self._self_listeners.add(f)
+
+
+
+def trigger(f = None, name = None, bind = None):
     if not callable(f):
-        return partial(hook, name = f)
-    return Hook(f, name)
+        return partial(trigger, name = name or f, bind = bind)
+    if name in _hashed_hooks:
+        h = _hashed_hooks[name]
+        if isinstance(_hashed_hooks[name], Trigger):
+            raise TypeError("There already is a trigger under the name {name}")
+        h = Trigger(f, h._listeners, h._instance_listeners)
+    else:
+        h = Trigger(f)
+    if name:
+        _hashed_hooks[name] = h
+    return h
 
+def hook(h, bind = None):
+    def deco(h, f):
+        if bind:
+            h.__get__(bind, type(bind))
+        h.register(f)
+        return f
 
-def on(hook):
-    def deco(h,f):
-        h._hook(f)
+    if isinstance(h, (Trigger, BoundTrigger)):
+        return partial(deco, h)
 
-    if isinstance(hook, Hook):
-        return partial(deco, hook)
-
-    elif hook in _hashed_hooks:
-        return partial(deco, _hashed_hooks[hook])
+    elif h in _hashed_hooks:
+        return partial(deco, _hashed_hooks[h])
 
     else:
-        tmp = _Hook()
-        _hashed_hooks[hook] = tmp
+        tmp = DummyTrigger()
+        _hashed_hooks[h] = tmp
         return partial(deco, tmp)
-
 
