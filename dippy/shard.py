@@ -99,7 +99,7 @@ class Shard(trio.abc.Channel):
             return f
         return decorate
 
-
+    @trigger("close")
     async def aclose(self):
         return await self._ws.aclose()
 
