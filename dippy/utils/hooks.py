@@ -38,14 +38,14 @@ class DummyTrigger(ABCTrigger):
 
 
     async def __call__(self):
-        raise TypeError("Target of trigger has not been defined yet")
+        raise TypeError("Trigger has not been defined yet")
 
 
 
 class Trigger(ABCTrigger):
 
-    def __init__(self, target, listeners=None):
-        super().__init__(target)
+    def __init__(self, func, listeners=None):
+        super().__init__(func)
         self._self_listeners = listeners or set()
         self._self_instance_listeners = None
 
@@ -72,8 +72,8 @@ class Trigger(ABCTrigger):
 
 class BoundTrigger(ABCTrigger):
 
-    def __init__(self, target, listeners, class_listeners):
-        super().__init__(target)
+    def __init__(self, func, listeners, class_listeners):
+        super().__init__(func)
         self._self_listeners = listeners
         self._self_class_listeners = class_listeners
 
@@ -103,9 +103,9 @@ class TriggerGroup(object):
             self._instance_hashed_hooks[instance] = {}
         return BoundTriggerGroup(self._instance_hashed_hooks[instance])
 
-    def trigger(self, f = None, name = None):
+    def trigger(self, f=None, name=None, instance=None, owner=None):
         if not callable(f):
-            return partial(self.trigger, name = name or f)
+            return partial(self.trigger, name=name or f, instance=instance, owner=owner)
 
         if name:
             if name in self._hashed_hooks:
@@ -114,27 +114,23 @@ class TriggerGroup(object):
                     raise TypeError("There already is a trigger under the name {name}")
                 h = Trigger(f, h.listeners)
             else:
-                h = Trigger(f)
-                self._hashed_hooks[name] = h
+                self._hashed_hooks[name] = h = Trigger(f)
+            if instance or owner:
+                h = h __get__(instance, owner or type(instance))
         else:
             h = Trigger(f)
 
         return h
 
 
-    def hook(self, h):
-        def deco(f):
-            h.register(f)
-            return f
-
+    def hook(self, h, instance=None, owner=None):
         if not isinstance(h, ABCTrigger):
             if h not in self._hashed_hooks:
-                tmp = DummyTrigger()
-                self._hashed_hooks[h] = tmp
+                self._hashed_hooks[h] = h = DummyTrigger()
             else:
-                tmp = self._hashed_hooks[h]
-            h = tmp
-        return deco
+                h = self._hashed_hooks[h]
+
+        return hook(h, instance, owner)
 
 
 
@@ -158,7 +154,10 @@ def trigger(f):
     return Trigger(f)
 
 
-def hook(h):
+def hook(h, instance=None, owner=None):
+    if instance or owner:
+        h = h.__get__(instance, owner or type(instance))
+
     def deco(f):
         h.register(f)
         return f
