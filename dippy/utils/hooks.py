@@ -97,7 +97,7 @@ class TriggerGroup(object):
     def __init__(self):
         self._hashed_hooks = {}
 
-    def trigger(self, f=None, name=None, instance=None, owner=None):
+    def trigger(self, f=None, name=None):
         if not callable(f):
             return partial(self.trigger, name=name or f)
 
@@ -108,13 +108,9 @@ class TriggerGroup(object):
                     raise TypeError("There already is a trigger under the name {name}")
                 h = Trigger(f, h.listeners)
             else:
-                h = Trigger(f)
-                self._hashed_hooks[name] = h
+                self._hashed_hooks[name] = h = Trigger(f)
         else:
             h = Trigger(f)
- 
-        if instance or owner:
-            h = h.__get__(instance, owner or type(instance))
 
         return h
 
@@ -137,9 +133,7 @@ class TriggerGroup(object):
 
 
 
-def trigger(f, instance=None, owner=None):
-    if instance or owner:
-        return BoundTrigger(f.__get__(instance, owner or type(instance), set(), set())
+def trigger(f):
     return Trigger(f)
 
 
