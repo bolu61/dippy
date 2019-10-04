@@ -116,7 +116,7 @@ class TriggerGroup(object):
             else:
                 self._hashed_hooks[name] = h = Trigger(f)
             if instance or owner:
-                h = h __get__(instance, owner or type(instance))
+                h = h.__get__(instance, owner or type(instance))
         else:
             h = Trigger(f)
 
