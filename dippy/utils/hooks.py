@@ -38,14 +38,14 @@ class DummyTrigger(ABCTrigger):
 
 
     async def __call__(self):
-        raise TypeError("Target of trigger has not been defined yet")
+        raise TypeError("Trigger has not been defined yet")
 
 
 
 class Trigger(ABCTrigger):
 
-    def __init__(self, target, listeners=None):
-        super().__init__(target)
+    def __init__(self, func, listeners=None):
+        super().__init__(func)
         self._self_listeners = listeners or set()
         self._self_instance_listeners = None
 
@@ -72,8 +72,8 @@ class Trigger(ABCTrigger):
 
 class BoundTrigger(ABCTrigger):
 
-    def __init__(self, target, listeners, class_listeners):
-        super().__init__(target)
+    def __init__(self, func, listeners, class_listeners):
+        super().__init__(func)
         self._self_listeners = listeners
         self._self_class_listeners = class_listeners
 
