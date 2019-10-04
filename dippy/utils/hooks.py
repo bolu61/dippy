@@ -97,7 +97,7 @@ class TriggerGroup(object):
     def __init__(self):
         self._hashed_hooks = {}
 
-    def trigger(self, f=None, name=None):
+    def trigger(self, f=None, name=None, instance=None, owner=None):
         if not callable(f):
             return partial(self.trigger, name=name or f)
 
@@ -112,19 +112,22 @@ class TriggerGroup(object):
                 self._hashed_hooks[name] = h
         else:
             h = Trigger(f)
+ 
+        if instance or owner:
+            h = h.__get__(instance, owner or type(instance))
 
         return h
 
 
-    def hook(self, h, instance=None):
+    def hook(self, h, instance=None, owner=None):
         if not isinstance(h, ABCTrigger):
             if h not in self._hashed_hooks:
                 self._hashed_hooks[h] = h = DummyTrigger()
             else:
                 h = self._hashed_hooks[h]
 
-        if instance:
-            h = h.__get__(instance, type(instance))
+        if instance or owner:
+            h = h.__get__(instance, owner or type(instance))
 
         def deco(f):
             h.register(f)
@@ -134,13 +137,15 @@ class TriggerGroup(object):
 
 
 
-def trigger(f):
+def trigger(f, instance=None, owner=None):
+    if instance or owner:
+        return BoundTrigger(f.__get__(instance, owner or type(instance), set(), set())
     return Trigger(f)
 
 
-def hook(h, instance=None):
-    if instance:
-        h = h.__get__(instance, type(instance))
+def hook(h, instance=None, owner=None):
+    if instance or owner:
+        h = h.__get__(instance, owner or type(instance))
 
     def deco(f):
         h.register(f)
