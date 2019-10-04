@@ -117,17 +117,15 @@ class TriggerGroup(object):
 
 
     def hook(self, h):
+        if not isinstance(h, ABCTrigger):
+            if h not in self._hashed_hooks:
+                self._hashed_hooks[h] = h = DummyTrigger()
+            else:
+                h = self._hashed_hooks[h]
+
         def deco(f):
             h.register(f)
             return f
-
-        if not isinstance(h, ABCTrigger):
-            if h not in self._hashed_hooks:
-                tmp = DummyTrigger()
-                self._hashed_hooks[h] = tmp
-            else:
-                tmp = self._hashed_hooks[h]
-            h = tmp
         return deco
 
 
