@@ -1,4 +1,4 @@
-from .utils.hooks import trigger, hook
+from .utils.hooks import trigger, hook, TriggerGroup
 from .payload import Payload
 
 import trio
@@ -32,6 +32,8 @@ async def get_gateway_url(config = None):
 
 class Shard(trio.abc.Channel):
 
+    hooks = TriggerGroup()
+
     def __init__(self, nursery, websocket):
         self._ns = nursery
         self._ws = websocket
@@ -63,7 +65,7 @@ class Shard(trio.abc.Channel):
             log.debug(data)
 
         @self.handler(10)
-        @trigger(name = "hello", bind = Shard)
+        @self.hooks.trigger("hello")
         async def on_hello(data):
             log.debug("opcode 10 hello received")
             self._hb = data['heartbeat_interval']
@@ -74,7 +76,7 @@ class Shard(trio.abc.Channel):
             self._ack.unpark_all()
 
 
-        @hook("hello")
+        @self.hooks.hook("hello")
         async def heartbeat(hb):
             hb_s = hb / 1000 + 0.5
 
@@ -88,7 +90,6 @@ class Shard(trio.abc.Channel):
                 except trio.TooSlowError:
                     #TODO disconnect and resume
                     raise Exception("too slow lol")
-                    return
 
                 await trio.sleep_until(deadline)
 
@@ -99,19 +100,19 @@ class Shard(trio.abc.Channel):
             return f
         return decorate
 
-    @trigger("close")
+    @hooks.trigger("close")
     async def aclose(self):
         return await self._ws.aclose()
 
 
-    @trigger("send")
+    @hooks.trigger("send")
     async def send(self, *args):
         r = Payload(*args)
         await self._ws.send_message(str(r))
         return r
 
 
-    @trigger("receive")
+    @hooks.trigger("receive")
     async def receive(self):
         return Payload.from_str(await self._ws.get_message())
 
