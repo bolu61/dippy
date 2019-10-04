@@ -30,6 +30,7 @@ async def get_gateway_url(config = None):
     return loads(r.content)['url']
 
 
+
 class Shard(trio.abc.Channel):
 
     hooks = TriggerGroup()
