@@ -1,14 +1,17 @@
-import dippy.gate as gate
-from dippy.utils.hooks import on
+from dippy.shard import spawn_shard
+from dippy.utils.hooks import hook
 
 import trio
 @trio.run
 async def main():
-    async with gate.open_gate() as g:
-        @on("send")
+    async with spawn_shard() as g:
+        @hook(g.send)
         async def _(data):
             print(f">>>{data}")
-        @on("receive")
+        @hook(g.receive)
         async def _(data):
             print(f"<<<{data}")
+        @hook(g.aclose)
+        async def _(data):
+            print('bye')
 

@@ -96,6 +96,12 @@ class TriggerGroup(object):
 
     def __init__(self):
         self._hashed_hooks = {}
+        self._instance_hashed_hooks = None
+
+    def __get__(self, instance, owner):
+        if instance not in self._instance_hashed_hooks:
+            self._instance_hashed_hooks[instance] = {}
+        return BoundTriggerGroup(self._instance_hashed_hooks[instance])
 
     def trigger(self, f = None, name = None):
         if not callable(f):
@@ -129,6 +135,22 @@ class TriggerGroup(object):
                 tmp = self._hashed_hooks[h]
             h = tmp
         return deco
+
+
+
+class TriggerGroupMixin(object):
+    hooks = TriggerGroup()
+
+
+
+class BoundTriggerGroup(TriggerGroup):
+
+    def __init__(self, hashed_hookds):
+        self._hashed_hooks = hashed_hookds
+
+
+    def __get__(self, instance, owner):
+        return self
 
 
 
