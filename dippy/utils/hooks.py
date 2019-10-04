@@ -1,7 +1,7 @@
 from wrapt import ObjectProxy
 import trio
 from functools import partial, reduce
-from abc import ABCMeta, abstractmethod
+from abc import ABC, abstractmethod
 
 _hashed_hooks = {}
 
@@ -13,47 +13,19 @@ class DummyTrigger(object):
         self._listeners = listeners or set()
         self._instance_listeners = instance_listeners or {}
 
+
     @property
     def target(self):
         raise TypeError("Target of trigger has not been defined yet")
+
 
     @property
     def listeners(self):
         return self._listeners
 
 
-    def __get__(self, instance, owner):
-        if instance not in self._instance_listeners:
-            self._instance_listeners[instance] = set()
-        return BoundDummyTrigger(self._instance_listeners, self._listeners)
-
-
     def register(self, f):
         self.listeners.add(f)
-
-
-
-class BoundDummyTrigger(object):
-
-    def __init__(self, listeners = None, class_listeners = None):
-        self._listeners = listeners
-        self._class_listeners = class_listeners or set()
-
-    @property
-    def target(self):
-        raise TypeError("Target of trigger has not been defined yet")
-
-    @property
-    def listeners(self):
-        return self._listeners | self._class_listeners
-
-
-    def __get__(self, instance, owner):
-        return self
-
-
-    def register(self, f):
-        self._listeners.add(f)
 
 
 
@@ -64,9 +36,11 @@ class Trigger(ObjectProxy):
         self._self_listeners = listeners or set()
         self._self_instance_listeners = instance_listeners or {}
 
+
     @property
     def listeners(self):
         return self._self_listeners
+
 
     @property
     def target(self):
@@ -104,9 +78,11 @@ class BoundTrigger(ObjectProxy):
         self._self_listeners = listeners
         self._self_class_listeners = class_listeners
 
+
     @property
     def listeners(self):
         return self._self_listeners | self._self_class_listeners
+
 
     @property
     def target(self):
@@ -144,6 +120,7 @@ def trigger(f = None, name = None, bind = None):
     if name:
         _hashed_hooks[name] = h
     return h
+
 
 def hook(h, bind = None):
     def deco(h, f):
