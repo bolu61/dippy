@@ -12,8 +12,9 @@ class ABCTrigger(ABC):
         pass
 
 
-    def register(self, callback):
-        self.listeners.add(callback)
+    @abstractmethod
+    def hook(self, callback):
+        pass
 
 
     async def __call__(self, *args, **kwargs):
@@ -71,6 +72,13 @@ class Trigger(ABCTrigger, ObjectProxy):
         )
 
 
+    def hook(self, callback, instance=None, owner=None):
+        if instance or owner:
+            self.__get__(instance, owner or type(instance)).hook(callback)
+        else:
+            self._self_listeners.add(callback)
+
+
     @property
     def listeners(self):
         return self._self_listeners
@@ -94,7 +102,7 @@ class BoundTrigger(ABCTrigger, ObjectProxy):
         return self._self_listeners | self._self_class_listeners
 
 
-    def register(self, callback):
+    def hook(self, callback):
         self._self_listeners.add(callback)
 
 
@@ -112,35 +120,37 @@ class TriggerGroup(object):
         return BoundTriggerGroup(instance, owner, self._hashed_hooks)
 
 
+    def __contains__(self,key):
+        return self._hashed_hooks.__contains__(key)
+
+
     def __getitem__(self, key):
-        return self._hashed_hooks[key]
+        return self._hashed_hooks.__getitem__(key)
 
 
-    def trigger(self, f=None, name=None, instance=None, owner=None):
-        if not callable(f):
-            return partial(self.trigger, name = name or f, instance=instance, owner=owner)
+    def __setitem__(self, key, value):
+        return self._hashed_hooks.__setitem__(key, value)
 
-        if name:
+
+    def trigger(self, name):
+        def deco(f):
             if name in self._hashed_hooks:
                 h = self._hashed_hooks[name]
-                if isinstance(h, DummyTrigger):
+                if isinstance(h, Trigger):
+                    raise ValueError(f'Trigger "{name}" already defined')
+                elif isinstance(h, DummyTrigger):
                     h = Trigger(f, h.listeners)
             else:
                 self._hashed_hooks[name] = h = Trigger(f)
-            if instance or owner:
-                h = h.__get__(instance, owner or type(instance))
+            return h
+        return deco
+
+
+    def hook(self, name, instance=None, owner=None):
+        if name not in self._hashed_hooks:
+            self._hashed_hooks[name] = h = DummyTrigger()
         else:
-            h = Trigger(f)
-
-        return h
-
-
-    def hook(self, h, instance=None, owner=None):
-        if not isinstance(h, ABCTrigger):
-            if h not in self._hashed_hooks:
-                self._hashed_hooks[h] = h = DummyTrigger()
-            else:
-                h = self._hashed_hooks[h]
+            h = self._hashed_hooks[name]
 
         return hook(h, instance, owner)
 
@@ -162,27 +172,46 @@ class BoundTriggerGroup(TriggerGroup):
         return super().__getitem__(key).__get__(self.instance, self.owner)
 
 
-    def trigger(self, f=None, name=None, bind=False):
-        if not callable(f):
-            return partial(self.trigger, name = name or f, bind=bind)
-        if not bind:
-            f = staticfunction(f)
-        return super().trigger(f, name, self.instance, self.owner)
+    def trigger(self, name, bind=False):
+        def deco(f):
+            if not bind:
+                f = localfunction(f)
+            if name in self._hashed_hooks:
+                h = self._hashed_hooks[name]
+                if isinstance(h, Trigger):
+                    raise ValueError(f'Trigger "{name}" already defined')
+                elif isinstance(h, DummyTrigger):
+                    h = Trigger(f, h.listeners)
+            else:
+                self._hashed_hooks[name] = h = Trigger(f)
+            return h.__get__(self.instance, self.owner)
+        return deco
 
 
-    def hook(self, h):
-        return super().hook(h, self.instance, self.owner)
+    def hook(self, name):
+        return super().hook(name, self.instance, self.owner)
 
 
 
-class staticfunction(ObjectProxy):
-
-    def __get__(self, instance, owner):
-        return self.__wrapped__
-
+class localfunction(ObjectProxy):
+    def __get__(self, instance=None, owner=None):
+        return self
 
     def __call__(self, *args, **kwargs):
-        return self.__wrapper__(*args, **kwargs)
+        return self.__wrapped__(*args, **kwargs)
+
+
+
+class HooksMixin:
+
+    hooks = None
+
+    def trigger(self, name):
+        return self.hooks.trigger(name)
+
+
+    def hook(self, name):
+        return self.hooks.hook(name)
 
 
 
@@ -195,6 +224,6 @@ def hook(h, instance=None, owner=None):
         h = h.__get__(instance, owner or type(instance))
 
     def deco(f):
-        h.register(f)
+        h.hook(f)
         return f
     return deco

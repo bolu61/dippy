@@ -14,7 +14,7 @@ repository = "https://github.com/nanananisore/dippy.git"
 keywords = ["discord","trio","bot","framework"]
 
 [tool.poetry.dependencies]
-python = "^3.7"
+python = "^3.6"
 asks = "^2.3"
 trio = "^0.12.1"
 trio-websocket = "^0.8.0"
@@ -22,7 +22,7 @@ wrapt = "^1.11"
 
 [tool.poetry.dev-dependencies]
 pylint = "^2.3"
-jupyter = "^1.0"
+pytest = "^5.3.2"
 
 [build-system]
 requires = ["poetry>=0.12"]

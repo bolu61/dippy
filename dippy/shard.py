@@ -1,4 +1,4 @@
-from .utils.hooks import trigger, hook, TriggerGroup
+from .utils.hooks import trigger, hook, HooksMixin, TriggerGroup
 from .payload import Payload
 
 import trio
@@ -31,7 +31,7 @@ async def get_gateway_url(config = None):
 
 
 
-class Shard(trio.abc.Channel):
+class Shard(trio.abc.Channel, HooksMixin):
 
     hooks = TriggerGroup()
 
