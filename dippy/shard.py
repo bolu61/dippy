@@ -1,4 +1,4 @@
-from .utils.hooks import trigger, hook, HooksMixin, TriggerGroup
+from hookt import trigger, hook, HooksMixin, TriggerGroup
 from .payload import Payload
 
 import trio
