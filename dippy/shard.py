@@ -36,14 +36,15 @@ class Shard(trio.abc.Channel, HooksMixin):
     hooks = TriggerGroup()
 
     def __init__(self, nursery, websocket):
-        self._ns = nursery
-        self._ws = websocket
-        self._hb = None
-        self._ls = None
-        self._ack = trio.hazmat.ParkingLot()
+        self.ns = nursery
+        self.ws = websocket
+        self.hb = None
+        self.ls = None
+        self.ack_lot = trio.hazmat.ParkingLot()
         self.handlers = {}
 
         @nursery.start_soon
+        @self.hooks.trigger("stop")
         async def listener():
             while True:
                 r = await self.receive()
@@ -61,33 +62,37 @@ class Shard(trio.abc.Channel, HooksMixin):
                 }
             })
 
-        @self.handler(0)
+        @self.set_handler(0)
+        @self.hooks.trigger("dispatch")
         async def on_dispatch(data):
             log.debug(data)
+            return data
 
-        @self.handler(10)
+        @self.set_handler(10)
         @self.hooks.trigger("hello")
         async def on_hello(data):
             log.debug("opcode 10 hello received")
-            self._hb = data['heartbeat_interval']
-            return self._hb
+            self.hb = data['heartbeat_interval']
+            return self.hb
 
-        @self.handler(11)
+        @self.set_handler(11)
+        @self.hooks.trigger("heartbeat")
         async def on_ack(data):
-            self._ack.unpark_all()
+            self.ack_lot.unpark_all()
 
 
         @self.hooks.hook("hello")
+        @self.hooks.trigger("hearbeat_stop")
         async def heartbeat(hb):
             hb_s = hb / 1000 + 0.5
 
             while True:
-                await self.send(1, self._ls)
+                await self.send(1, self.ls)
                 deadline = trio.current_time() + hb_s
 
                 try:
                     with trio.fail_at(deadline):
-                        await self._ack.park()
+                        await self.ack_lot.park()
                 except trio.TooSlowError:
                     #TODO disconnect and resume
                     raise Exception("too slow lol")
@@ -95,7 +100,7 @@ class Shard(trio.abc.Channel, HooksMixin):
                 await trio.sleep_until(deadline)
 
 
-    def handler(self, opcode):
+    def set_handler(self, opcode):
         def decorate(f):
             self.handlers[opcode] = f
             return f
@@ -103,17 +108,17 @@ class Shard(trio.abc.Channel, HooksMixin):
 
     @hooks.trigger("close")
     async def aclose(self):
-        return await self._ws.aclose()
+        return await self.ws.aclose()
 
 
     @hooks.trigger("send")
     async def send(self, *args):
         r = Payload(*args)
-        await self._ws.send_message(str(r))
+        await self.ws.send_message(str(r))
         return r
 
 
     @hooks.trigger("receive")
     async def receive(self):
-        return Payload.from_str(await self._ws.get_message())
+        return Payload.from_str(await self.ws.get_message())
 
