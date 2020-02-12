@@ -14,15 +14,12 @@ log = logging.getLogger(__name__)
 
 
 @asynccontextmanager
-async def spawn_shard(*args, **kwargs):
+async def create_shard(*args, **kwargs):
     gateway_url = await get_gateway_url()
     async with trio.open_nursery() as ns:
-        yield Shard(ns, await connect_websocket_url(ns, f"{gateway_url}?/v=6&encoding=json", *args, **kwargs)) #TODO parametrizwe the url
+        async with Shard(ns, await connect_websocket_url(ns, f"{gateway_url}?/v=6&encoding=json", *args, **kwargs)) as s:
+            yield s
 
-
-async def shard(nursery, *args, **kwargs):
-    gateway_url = get_gateway_url()
-    yield Shard(nursery, await connect_websocket_url(nursery, f"{gateway_url}?/v=6&encoding=json", *args, **kwargs))
 
 
 async def get_gateway_url(config = None):
@@ -108,6 +105,8 @@ class Shard(trio.abc.Channel, HooksMixin):
 
     @hooks.trigger("close")
     async def aclose(self):
+        await trio.checkpoint()
+        print("hello")
         return await self.ws.aclose()
 
 
