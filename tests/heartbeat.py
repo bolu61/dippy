@@ -1,14 +1,18 @@
-from dippy.shard import spawn_shard
+import logging
+import os
 
 import trio
-import logging
+
+from dippy.shard import spawn_shard
 
 log = logging.getLogger('dippy.shard')
 log.addHandler(logging.StreamHandler())
 log.setLevel(logging.DEBUG)
 
+token = os.environ["DIPPY_TEST_TOKEN"]
+
 async def main():
-    async with spawn_shard('Njk1MzQwMjg4MjUxNTI3MjM4.XoaYxg.YgYARGxwG8oV5sxUIkg7cu2ZzxM') as shard:
+    async with spawn_shard(token) as shard:
         @shard.hook('send')
         async def _(data):
             print(f'>>>{data}')
