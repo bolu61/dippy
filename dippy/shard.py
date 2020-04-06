@@ -1,30 +1,44 @@
-from hookt import trigger, hook, HooksMixin, TriggerGroup
-from .payload import Payload
+"""shard
+"""
+
+from contextlib import asynccontextmanager
+from json import loads
+from typing import Tuple, Mapping, Callable, Any
+
+import logging
+
+from trio import Nursery
+from hookt import HooksMixin, TriggerGroup
+from trio_websocket import connect_websocket_url, WebSocketConnection
 
 import trio
-from trio_websocket import connect_websocket_url
 import asks
-from contextlib import asynccontextmanager
-from json import dumps, loads
-from collections import namedtuple
-from functools import partial
-import logging
+
+from .orm import payload, packet
 
 log = logging.getLogger(__name__)
 
 
 @asynccontextmanager
-async def create_shard(*args, **kwargs):
-    gateway_url = await get_gateway_url()
+async def spawn_shard(token, shard_id=None):
+    """TODO"""
+    if shard_id is None:
+        shard_id = [0, 1]
+    url = await _get_gateway_url(token)
     async with trio.open_nursery() as ns:
-        async with Shard(ns, await connect_websocket_url(ns, f"{gateway_url}?/v=6&encoding=json", *args, **kwargs)) as s:
-            yield s
+        ws = await connect_websocket_url(ns, url)
+        async with Shard(ns, ws, token, shard_id) as shard:
+            yield shard
+            await shard.run()
+        await ws.aclose()
 
 
-
-async def get_gateway_url(config = None):
-    r = await asks.get('https://discordapp.com/api/gateway')
+async def _get_gateway_url(token, endpoint='https://discordapp.com/api/gateway/bot'):
+    r = await asks.get(endpoint, headers={'Authorization': f'Bot {token}'})
     return loads(r.content)['url']
+
+
+
 
 
 
@@ -32,92 +46,114 @@ class Shard(trio.abc.Channel, HooksMixin):
 
     hooks = TriggerGroup()
 
-    def __init__(self, nursery, websocket):
+    def __init__(self, nursery: Nursery, websocket: WebSocketConnection, token: str, shard_id: Tuple[int,int] = (0,1), buffer_size: int = 32):
+        self.heartbeat = None
+        self.heartbeat_scope = None
+
         self.ns = nursery
         self.ws = websocket
-        self.hb = None
-        self.ls = None
-        self.ack_lot = trio.hazmat.ParkingLot()
-        self.handlers = {}
+        self.hb: int = None
+        self.ls: packet = None
 
-        @nursery.start_soon
-        @self.hooks.trigger("stop")
-        async def listener():
-            while True:
-                r = await self.receive()
-                if r.op not in self.handlers:
-                    raise #TODO
-                nursery.start_soon(self.handlers[r.op], r.d)
+        self.handlers: Mapping[int, Callable[[packet],Any]] = {}
+        self.token = token
+        self.shard_id = shard_id
+        self.heartbeat = None
 
-        async def identify(self, _):
-            await self.send(2, {
-                'token': '',
-                'properties': {
-                    '$os': "win10",
-                    '$browser': "dippy",
-                    '$device': "dippy"
-                }
-            })
+        self.dptch_queue, self.event_queue = trio.open_memory_channel(buffer_size)
 
-        @self.set_handler(0)
-        @self.hooks.trigger("dispatch")
-        async def on_dispatch(data):
-            log.debug(data)
-            return data
-
-        @self.set_handler(10)
-        @self.hooks.trigger("hello")
-        async def on_hello(data):
-            log.debug("opcode 10 hello received")
-            self.hb = data['heartbeat_interval']
-            return self.hb
-
-        @self.set_handler(11)
-        @self.hooks.trigger("heartbeat")
-        async def on_ack(data):
-            self.ack_lot.unpark_all()
+        self.handlers[0] = self.on_dispatch
+        self.handlers[10] = self.on_hello
+        self.handlers[11] = self.on_heartbeat
 
 
-        @self.hooks.hook("hello")
-        @self.hooks.trigger("hearbeat_stop")
-        async def heartbeat(hb):
-            hb_s = hb / 1000 + 0.5
-
-            while True:
-                await self.send(1, self.ls)
-                deadline = trio.current_time() + hb_s
-
-                try:
-                    with trio.fail_at(deadline):
-                        await self.ack_lot.park()
-                except trio.TooSlowError:
-                    #TODO disconnect and resume
-                    raise Exception("too slow lol")
-
-                await trio.sleep_until(deadline)
+    @hooks.trigger("stop")
+    async def run(self):
+        """TODO"""
+        log.debug("%s starting", self)
+        self.heartbeat = trio.hazmat.ParkingLot()
+        async for r in self:
+            if r.op not in self.handlers:
+                raise NotImplementedError(f"handler for {r.op}") #TODO
+            self.ns.start_soon(self.handlers[r.op], r.d)
+        log.debug(f"{self}'s main loop stopped")
 
 
-    def set_handler(self, opcode):
-        def decorate(f):
-            self.handlers[opcode] = f
-            return f
-        return decorate
+    @hooks.trigger("dispatch")
+    async def on_dispatch(self, data):
+        return data
+
+
+    @hooks.trigger("hello")
+    async def on_hello(self, data):
+        self.hb = data['heartbeat_interval']
+
+        self.ns.start_soon(self.heartbeating)
+
+        r = {
+            'token': self.token,
+            'properties': {
+                '$os': "win10",
+                '$browser': "dippy",
+                '$device': "dippy"
+            },
+            'shard': self.shard_id
+        }
+
+        await self.send(2, r)
+
+        return r
+
+
+    @hooks.trigger("heartbeat")
+    async def on_heartbeat(self, data):
+        if not self.heartbeat:
+            raise RuntimeError(f"{self} is closed, but still received a heartbeat") # TODO: define custom exception
+
+        self.heartbeat.unpark_all()
+
+
+    async def heartbeating(self):
+        hb_s = self.hb / 1000 + 0.5
+        if self.heartbeat is None:
+            raise RuntimeError(f"{self} is closed, cannot start heartbeat")
+
+        log.debug(f"{self} started")
+        while self.heartbeat is not None:
+            await self.send(1, self.ls)
+            deadline = trio.current_time() + hb_s
+            with trio.move_on_at(deadline) as heartbeat_scope:
+                heartbeat_scope.shield = True
+                self.heartbeat_scope = heartbeat_scope
+                await self.heartbeat.park()
+            if heartbeat_scope.cancel_called:
+                #TODO disconnect or resume or
+                log.debug(f"{self}'s heartbeat stopped")
+            await trio.sleep_until(deadline)
+
+
 
     @hooks.trigger("close")
     async def aclose(self):
-        await trio.checkpoint()
-        print("hello")
-        return await self.ws.aclose()
+        if self.heartbeat is not None:
+            log.debug(f"{self} closing")
+            if self.heartbeat_scope is not None:
+                self.heartbeat_scope.cancel()
+            await self.dptch_queue.aclose()
+            await self.event_queue.aclose()
+
+        log.debug(f"{self} closed")
+        return
 
 
     @hooks.trigger("send")
     async def send(self, *args):
-        r = Payload(*args)
-        await self.ws.send_message(str(r))
+        r = payload(*args)
+        await self.ws.send_message(r.json())
         return r
 
 
     @hooks.trigger("receive")
     async def receive(self):
-        return Payload.from_str(await self.ws.get_message())
+        return payload.parse_raw(await self.ws.get_message())
 
