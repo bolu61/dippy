@@ -1,3 +1,5 @@
+from .base import generic
+
 class lazy(generic):
     def __init__(self, *args, **kwargs):
         t = type(self).__tvars__[0]

@@ -1,4 +1,5 @@
 import logging
+import itertools
 
 from collections import OrderedDict
 from reprlib import repr, recursive_repr
@@ -7,27 +8,84 @@ import trio
 
 from wrapt import ObjectProxy
 
-from .generic import generic
-
 log = logging.getLogger(__name__)
+
+
+class generictype(type):
+
+    def __new__(mcls, name, bases, namespace, **kwargs):
+        return super().__new__(mcls, name, bases, namespace)
+
+
+    def __init__(cls, name, bases, namespace):
+        cls.__type__ = type(cls.__qualname__, (), dict(cls.__dict__))
+        cls.__cache__ = {}
+
+
+    def lift(cls, kls):
+        ret = cls.__cache__.get(kls)
+        if ret is not None:
+            return ret
+
+        name = ','.join(map(lambda t: t.__qualname__, kls))
+        name = f"{cls.__qualname__}[{name}]"
+
+        bases = map(lambda t: t.__bases__, kls)
+        bases = itertools.product(*bases)
+        bases = map(lambda t: cls.lift(t), bases)
+        bases = tuple(bases) + (cls.__type__,)
+
+        namespace = {'__tvars__': kls}
+
+        return type(name, bases, namespace)
+
+
+    def __getitem__(cls, t):
+        if type(t) is not tuple:
+            t = (t,)
+
+        return cls.lift(t)
+
+
+
+class any:
+    def __new__(self, obj):
+        return obj
+
+
+
+class generic(metaclass=generictype):
+    pass
+
+
 
 class orm(type):
     refs = {}
 
+    def __prepare__(name, bases, **kwargs):
+        return OrderedDict()
+
     def __new__(cls, name, bases, namespace, **kwargs):
-        if '__slots__' in namespace:
-            namespace['__slots__'] += tuple(namespace['__annotations__'])
-        else:
-            namespace['__slots__'] = tuple(namespace['__annotations__'])
-        return super().__new__(cls, name, bases, namespace, **kwargs)
-
-    def __init__(cls, name, bases, namespace, **kwargs):
         orm.refs[cls.__qualname__] = cls
-        fields = OrderedDict()
-        for k, v in cls.__annotations__.items():
-            fields[k] = field(k, v, namespace.get(k, Undefined))
 
-        cls.__fields__ = fields
+        try:
+            annotations = namespace['__annotations__']
+        except KeyError:
+            pass
+        else:
+            for k, t in annotations.items():
+                try:
+                    v = namespace[k]
+                except KeyError:
+                    namespace[k] = field(k, t)
+                else:
+                    if not isinstance(v, field):
+                        if isinstance(v, callable):
+                            namespace[k] = field(k, t, factory=v)
+                        else:
+                            namespace[k] = field(k, t, default=v)
+
+        return super().__new__(cls, name, bases, namespace, **kwargs)
 
 
     def __repr__(cls):
@@ -51,131 +109,96 @@ Undefined = UndefinedType()
 
 
 class field:
-    __slots__ = 'name', '_type', '_value'
+    __slots__ = 'name', 'factory', 'default'
 
-    def __init__(self, name, type, value=Undefined):
+    def __init__(self, name, factory, default=Undefined):
         self.name = name
-        self._type = type
-        self._value = value
+        self.type = factory
+        self.default = default
+        self.factory = factory
 
 
     @property
     def type(self):
-        if isinstance(self._type, str):
+        if isinstance(self.factory, str):
             try:
-                self._type = orm.refs[self._type]
+                self.factory = orm.refs[self.factory]
             except KeyError as e:
-                raise TypeError(f"{self._type} cannot be resolved to be a type") from e
-        return self._type
+                raise TypeError(f"{self.factory} cannot be resolved to be a type") from e
+        return self.factory
 
 
-    @property
-    def value(self):
-        if self._value is Undefined:
-            raise AttributeError(f"{self} has no value")
-        if not isinstance(self._value, self.type) and self._value is not None:
-            self._value = self._type(self._value)
-        return self._value
+    @type.setter
+    def type(self, value):
+        self.factory = value
 
 
-    @value.setter
-    def value(self, value):
-        self._value = value
+    def __get__(self, instance, owner=None):
+        try:
+            data = instance.__wrapped__
+        except AttributeError as e:
+            raise AttributeError(f"{self.name}") from e
+
+        try:
+            value = data[self.name]
+        except KeyError as e:
+            if self.default is Undefined:
+                raise AttributeError(f"{self.name}")
+            else:
+                value = self.default
+
+        if not isinstance(value, self.type):
+            if self.factory is None:
+                self.factory = self.type
+            data[self.name] = value = self.factory(value)
+
+        return value
 
 
-    def __iter__(self):
-        yield self.type
-        yield self.value
+    def __set__(self, instance, value):
+        try:
+            data = instance.__wrapped__
+        except AttributeError:
+            data = instance.__wrapped__ = {}
+        data[name] = value
 
 
     def __repr__(self):
-        if self._value is not Undefined:
-            return f"<{type(self).__name__} {self.name}: {self.type.__name__} = {self.value}>"
+        if self.default is not Undefined:
+            return f"<{type(self).__name__} {self.name}: {self.type.__name__} = {self.default}>"
         else:
             return f"<{type(self).__name__} {self.name}: {self.type.__name__}>"
 
 
 
-class array(generic):
-    __annotations__ = {}
-
-    async def __init__(self, data=None):
-        pass
-
-
-
 class struct(metaclass=orm):
     __annotations__ = {}
-    __slots__ = '__dict__', '__fields__'
 
     def __init__(self, data=None, **kwargs):
-        for k, v in (data or kwargs).items():
-            self[k] = v
+        self.__dict__['__wrapped__'] = data or kwargs
 
 
     @property
     def data(self):
-        return {k:f.value for k,f in self.__fields__.items()}
+        return self.__wrapped__
 
 
     def __getattr__(self, key):
-        try:
-            return self[key]
-        except KeyError:
-            raise AttributeError(f"{type(self).__name__} object has no attribute '{key}'")
+        return self.__wrapped__[key]
 
 
     def __getitem__(self, key):
-        return self.__fields__[key].value
-
-
-    def __setattr__(self, key, value):
-        self[key] = value
+        return getattr(self, key)
 
 
     def __setitem__(self, key, value):
-        try:
-            self.__fields__[key].value = value
-        except KeyError:
-            super().__setattr__(key, value)
+        self.__wrapped__[key] = value
+
+
+    def __setitem__(self, key, value):
+        setattr(self, key, value)
 
 
     @recursive_repr(f"<struct ...>")
     def __repr__(self):
         return f"<{type(self).__name__} {repr(self.data)}>"
-
-
-
-if __name__ == "__main__":
-
-    class user(struct):
-        id: int
-        friend: 'user'
-
-        async def __load__(self):
-            if self.id == 1234:
-                self.friend = user({
-                    'id': 123,
-                    'friend': None
-                })
-            self.__loaded__ = True
-            return self
-
-
-
-    class client(struct):
-        user: lazy[user]
-
-
-    data = {
-        'user': {
-            'id': 1234
-        }
-    }
-
-    async def main():
-        c = client(data)
-        print(c.user.friend)
-
-    trio.run(main)
-
