@@ -144,7 +144,7 @@ class field:
             if self.default is Undefined:
                 raise AttributeError(f"{self.name}")
             else:
-                value = self.default
+                data[self.name] = value = self.default
 
         if not isinstance(value, self.type):
             data[self.name] = value = self.type(value)
