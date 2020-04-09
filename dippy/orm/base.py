@@ -80,10 +80,7 @@ class orm(type):
                     namespace[k] = field(k, t)
                 else:
                     if not isinstance(v, field):
-                        if isinstance(v, callable):
-                            namespace[k] = field(k, t, factory=v)
-                        else:
-                            namespace[k] = field(k, t, default=v)
+                        namespace[k] = field(k, t, default=v)
 
         return super().__new__(cls, name, bases, namespace, **kwargs)
 
@@ -102,6 +99,7 @@ class UndefinedType:
         if not self.instance:
             self.instance = super().__new__(self)
         return self.instance
+
 
 
 Undefined = UndefinedType()
