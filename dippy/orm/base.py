@@ -115,7 +115,6 @@ class field:
         self.name = name
         self.type = factory
         self.default = default
-        self.factory = factory
 
 
     @property
@@ -148,9 +147,7 @@ class field:
                 value = self.default
 
         if not isinstance(value, self.type):
-            if self.factory is None:
-                self.factory = self.type
-            data[self.name] = value = self.factory(value)
+            data[self.name] = value = self.type(value)
 
         return value
 
