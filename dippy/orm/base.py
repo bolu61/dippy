@@ -140,7 +140,7 @@ class field:
             value = data[self.name]
         except KeyError as e:
             if self.default is Undefined:
-                raise AttributeError(f"{self.name}")
+                raise AttributeError(f"{self.name}") from e
             else:
                 data[self.name] = value = self.default
 
