@@ -4,9 +4,6 @@ import itertools
 from collections import OrderedDict
 from reprlib import repr, recursive_repr
 
-import trio
-
-from wrapt import ObjectProxy
 
 log = logging.getLogger(__name__)
 
