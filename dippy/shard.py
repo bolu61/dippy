@@ -2,7 +2,7 @@
 """
 
 from contextlib import asynccontextmanager
-from json import loads
+from json import dumps, loads
 from typing import Tuple, Mapping, Callable, Any
 
 import logging
@@ -14,7 +14,7 @@ from trio_websocket import connect_websocket_url, WebSocketConnection
 import trio
 import asks
 
-from .orm import payload, packet
+from .orm import payload, heartbeat
 
 log = logging.getLogger(__name__)
 
@@ -52,10 +52,10 @@ class Shard(trio.abc.Channel, HooksMixin):
 
         self.ns = nursery
         self.ws = websocket
-        self.hb: int = None
-        self.ls: packet = None
+        self.hb = None
+        self.ls = None
 
-        self.handlers: Mapping[int, Callable[[packet],Any]] = {}
+        self.handlers = {}
         self.token = token
         self.shard_id = shard_id
         self.heartbeat = None
@@ -75,18 +75,19 @@ class Shard(trio.abc.Channel, HooksMixin):
         async for r in self:
             if r.op not in self.handlers:
                 raise NotImplementedError(f"handler for {r.op}") #TODO
-            self.ns.start_soon(self.handlers[r.op], r.d)
+            self.ns.start_soon(self.handlers[r.op], r)
         log.debug(f"{self}'s main loop stopped")
 
 
     @hooks.trigger("dispatch")
-    async def on_dispatch(self, data):
-        return data
+    async def on_dispatch(self, payload):
+        self.ls = payload.s
+        return payload.t, payload.d, payload.s
 
 
     @hooks.trigger("hello")
-    async def on_hello(self, data):
-        self.hb = data['heartbeat_interval']
+    async def on_hello(self, payload):
+        self.hb = payload.d.heartbeat_interval
 
         self.ns.start_soon(self.heartbeating)
 
@@ -106,11 +107,12 @@ class Shard(trio.abc.Channel, HooksMixin):
 
 
     @hooks.trigger("heartbeat")
-    async def on_heartbeat(self, data):
+    async def on_heartbeat(self, payload):
         if not self.heartbeat:
             raise RuntimeError(f"{self} is closed, but still received a heartbeat") # TODO: define custom exception
 
         self.heartbeat.unpark_all()
+        return heartbeat(payload.d)
 
 
     async def heartbeating(self):
@@ -147,13 +149,13 @@ class Shard(trio.abc.Channel, HooksMixin):
 
 
     @hooks.trigger("send")
-    async def send(self, *args):
-        r = payload(*args)
-        await self.ws.send_message(r.json())
+    async def send(self, op, d, s=None, t=None):
+        r = payload(op=op, d=d, s=s, t=t)
+        await self.ws.send_message(dumps(r.data))
         return r
 
 
     @hooks.trigger("receive")
     async def receive(self):
-        return payload.parse_raw(await self.ws.get_message())
+        return payload(loads(await self.ws.get_message()))
 

@@ -3,7 +3,7 @@ import os
 
 import trio
 
-from dippy.shard import spawn_shard
+from dippy import spawn_shard
 
 log = logging.getLogger('dippy.shard')
 log.addHandler(logging.StreamHandler())
@@ -15,11 +15,11 @@ async def main():
     async with spawn_shard(token) as shard:
         @shard.hook('send')
         async def _(data):
-            print(f'>>>{data}')
+            print(f'>>># {data}')
 
         @shard.hook('receive')
         async def _(data):
-            print(f'<<<{data}')
+            print(f'<<<# {data}')
 
 
 if __name__ == '__main__':
