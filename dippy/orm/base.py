@@ -139,12 +139,9 @@ class field:
             if self.default is Undefined:
                 raise AttributeError(f"{self.name}") from e
             else:
-                data[self.name] = value = self.default
+                value = self.default
 
-        if not isinstance(value, self.type):
-            data[self.name] = value = self.type(value)
-
-        return value
+        return self.type(value)
 
 
     def __set__(self, instance, value):
@@ -180,15 +177,15 @@ class struct(metaclass=orm):
 
 
     def __getitem__(self, key):
-        return getattr(self, key)
+        return self.__wrapped__[key]
 
 
-    def __setitem__(self, key, value):
+    def __setattr__(self, key, value):
         self.__wrapped__[key] = value
 
 
     def __setitem__(self, key, value):
-        setattr(self, key, value)
+        self.__wrapped__[key] = value
 
 
     @recursive_repr(f"<struct ...>")

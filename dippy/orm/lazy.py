@@ -9,7 +9,7 @@ class lazy(generic):
     def __getattr__(self, key):
         if getattr(self.__wrapped__, '__loaded__', False):
             return getattr(self.__wrapped__, key)
-        return lazy[lazy.field](self.__wrapped__, key)
+        return lazy[lazy.ret](self.__wrapped__, key)
 
 
     def __await__(self):
@@ -20,7 +20,7 @@ class lazy(generic):
         return '*' + self.__wrapped__.__repr__()
 
 
-    class field(ObjectProxy):
+    class ret(ObjectProxy):
         def __init__(self, parent, key):
             super().__init__(key)
             self._self_parent = parent
