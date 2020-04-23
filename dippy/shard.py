@@ -87,7 +87,7 @@ class Shard(trio.abc.Channel, HooksMixin):
 
     @hooks.trigger("hello")
     async def on_hello(self, payload):
-        self.hb = payload.d.heartbeat_interval
+        self.hb = payload.d['heartbeat_interval']
 
         self.ns.start_soon(self.heartbeating)
 
